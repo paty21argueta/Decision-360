@@ -6,8 +6,22 @@ const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1/messages';
 const MODEL = process.env.D360_MODEL || 'anthropic/claude-sonnet-5';
 
 function errorMessage(status, data) {
-  if (status === 401 || status === 403) {
-    return 'La clave de AI Gateway no es válida o no tiene permisos. Revisa la variable AI_GATEWAY_API_KEY en Vercel y vuelve a desplegar.';
+  const err = (data && data.error) || {};
+  const type = String(err.type || err.code || '');
+  const msg = String(err.message || (typeof data?.error === 'string' ? data.error : '') || '');
+  const detail = msg ? ` Detalle de Vercel: "${msg.slice(0, 220)}"` : '';
+
+  if (type === 'customer_verification_required' || /credit card|payment method/i.test(msg)) {
+    return 'Vercel pide una tarjeta registrada para activar los créditos gratuitos de AI Gateway. Agrégala en Settings → Billing de tu cuenta de Vercel y vuelve a intentar (no se cobra mientras uses los créditos gratuitos).' + detail;
+  }
+  if (/free tier|free credits/i.test(msg)) {
+    return 'El modelo configurado no está incluido en el plan gratuito de AI Gateway. Cambia la variable D360_MODEL por un modelo gratuito o compra créditos de AI Gateway.' + detail;
+  }
+  if (status === 401) {
+    return 'La clave de AI Gateway no es válida, se borró o no se cargó. Revisa la variable AI_GATEWAY_API_KEY (que aplique a Production) y vuelve a desplegar.' + detail;
+  }
+  if (status === 403) {
+    return 'AI Gateway rechazó la solicitud por permisos de la cuenta.' + detail;
   }
   if (status === 402) {
     return 'Se agotaron los créditos de AI Gateway. Revisa el saldo en tu panel de Vercel.';
@@ -15,8 +29,7 @@ function errorMessage(status, data) {
   if (status === 429) {
     return 'Hay demasiadas solicitudes o se agotaron los créditos de AI Gateway. Espera un minuto e inténtalo de nuevo.';
   }
-  const detail = data && data.error && (data.error.message || data.error);
-  return `El modelo devolvió un error (código ${status}). ${detail ? String(detail).slice(0, 200) : ''}`.trim();
+  return `El modelo devolvió un error (código ${status}).${detail}`.trim();
 }
 
 export default async function handler(req, res) {
@@ -62,6 +75,7 @@ export default async function handler(req, res) {
     try { data = await r.json(); } catch { data = null; }
 
     if (!r.ok) {
+      console.error('AI Gateway error', r.status, JSON.stringify(data).slice(0, 500));
       return res.status(502).json({ error: errorMessage(r.status, data) });
     }
 
